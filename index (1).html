@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Viewfinder — File Metadata Inspector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
+<style>
+  :root{
+    --bg-void:#121316;
+    --panel:#1a1c20;
+    --panel-alt:#17181c;
+    --line:#2b2e34;
+    --brass:#E3A94C;
+    --brass-dim:#7a5f2c;
+    --cyan:#5FD9CE;
+    --text:#EDEEEE;
+    --text-dim:#8B8F98;
+    --danger:#E8604C;
+    --radius:2px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg-void);color:var(--text);font-family:'Inter',sans-serif;}
+  body{
+    min-height:100vh;
+    padding:48px 20px 80px;
+    background-image:
+      radial-gradient(circle at 15% 10%, rgba(227,169,76,0.05), transparent 40%),
+      radial-gradient(circle at 85% 90%, rgba(95,217,206,0.04), transparent 45%);
+  }
+  .wrap{max-width:960px;margin:0 auto;}
+
+  /* HEADER */
+  header{margin-bottom:44px;}
+  .eyebrow{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;letter-spacing:0.28em;text-transform:uppercase;
+    color:var(--brass);margin-bottom:10px;display:flex;align-items:center;gap:10px;
+  }
+  .eyebrow::before{content:"";width:7px;height:7px;background:var(--brass);border-radius:50%;box-shadow:0 0 8px var(--brass);}
+  h1{
+    font-family:'Oswald',sans-serif;font-weight:700;
+    font-size:clamp(32px,5vw,52px);letter-spacing:0.01em;margin:0 0 10px;
+    text-transform:uppercase;
+  }
+  header p{color:var(--text-dim);font-size:15px;line-height:1.6;max-width:560px;margin:0;}
+
+  /* VIEWFINDER DROPZONE */
+  .viewfinder{
+    position:relative;
+    margin:0 0 40px;
+    aspect-ratio:16/7;
+    background:var(--panel-alt);
+    border:1px solid var(--line);
+    cursor:pointer;
+    overflow:hidden;
+    transition:border-color .25s ease, background .25s ease;
+  }
+  .viewfinder:hover{background:#191b1f;}
+  .viewfinder.drag{background:#1d2015;border-color:var(--brass);}
+  .viewfinder.locked{border-color:var(--brass);}
+  .corner{position:absolute;width:26px;height:26px;border-color:var(--text-dim);transition:all .35s cubic-bezier(.2,.9,.3,1.2);}
+  .corner.tl{top:16px;left:16px;border-top:2px solid;border-left:2px solid;}
+  .corner.tr{top:16px;right:16px;border-top:2px solid;border-right:2px solid;}
+  .corner.bl{bottom:16px;left:16px;border-bottom:2px solid;border-left:2px solid;}
+  .corner.br{bottom:16px;right:16px;border-bottom:2px solid;border-right:2px solid;}
+  .viewfinder.locked .corner{border-color:var(--brass);width:34px;height:34px;}
+  .viewfinder.locked .corner.tl{top:10px;left:10px;}
+  .viewfinder.locked .corner.tr{top:10px;right:10px;}
+  .viewfinder.locked .corner.bl{bottom:10px;left:10px;}
+  .viewfinder.locked .corner.br{bottom:10px;right:10px;}
+
+  .vf-center{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+    text-align:center;padding:20px;
+  }
+  .vf-icon{width:44px;height:44px;border:1px solid var(--text-dim);border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;}
+  .vf-icon::after{content:"";width:16px;height:16px;border-radius:50%;background:var(--text-dim);}
+  .vf-label{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text-dim);letter-spacing:0.04em;}
+  .vf-label b{color:var(--text);font-weight:500;}
+  .vf-sub{font-size:11px;color:#5a5d64;letter-spacing:0.05em;}
+
+  .vf-preview{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#000;}
+  .vf-preview img{max-width:100%;max-height:100%;object-fit:contain;}
+  .vf-preview .file-glyph{
+    font-family:'JetBrains Mono',monospace;color:var(--brass);font-size:15px;
+    display:flex;flex-direction:column;align-items:center;gap:8px;
+  }
+  .vf-badge{
+    position:absolute;top:14px;left:50%;transform:translateX(-50%);
+    font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.18em;
+    color:var(--brass);background:rgba(18,19,22,0.85);padding:4px 10px;
+    border:1px solid var(--brass-dim);text-transform:uppercase;display:none;
+  }
+  .viewfinder.locked .vf-badge{display:block;}
+  .viewfinder.locked .vf-center{display:none;}
+
+  input[type=file]{display:none;}
+
+  .error-msg{
+    display:none;color:var(--danger);font-family:'JetBrains Mono',monospace;
+    font-size:12.5px;margin:-24px 0 30px;padding:10px 14px;border:1px solid rgba(232,96,76,0.35);
+    background:rgba(232,96,76,0.06);
+  }
+
+  /* SPEC SHEET */
+  .sheet{display:none;}
+  .sheet.show{display:block;}
+  .sheet-head{
+    display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px;
+    border-bottom:1px solid var(--line);padding-bottom:12px;
+  }
+  .sheet-head h2{
+    font-family:'Oswald',sans-serif;text-transform:uppercase;font-size:15px;letter-spacing:0.1em;
+    color:var(--text-dim);margin:0;font-weight:600;
+  }
+  .filename{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--brass);max-width:60%;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:1px;}
+  @media(max-width:640px){.grid{grid-template-columns:1fr;}}
+
+  .panel{background:var(--panel);padding:20px 22px;}
+  .panel-title{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:0.18em;text-transform:uppercase;
+    color:var(--cyan);margin-bottom:14px;display:flex;align-items:center;gap:8px;
+  }
+  .panel-title.warn{color:var(--brass);}
+  .panel.empty .panel-title{color:#4a4d54;}
+  .row{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px dashed #24262b;}
+  .row:last-child{border-bottom:none;}
+  .row .k{font-size:12.5px;color:var(--text-dim);}
+  .row .v{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--text);text-align:right;word-break:break-word;}
+  .row .v.na{color:#4a4d54;}
+  .row .v.link{color:var(--cyan);}
+  .row .v.link a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--cyan);}
+
+  .note{
+    font-family:'JetBrains Mono',monospace;font-size:11px;color:#5a5d64;
+    padding:14px 22px;background:var(--panel-alt);border:1px solid var(--line);border-top:none;
+    line-height:1.6;
+  }
+
+  footer{margin-top:56px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#4a4d54;letter-spacing:0.08em;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Metadata Readout</div>
+    <h1>Viewfinder</h1>
+    <p>Drop an image or PDF into the frame. Viewfinder reads what the browser exposes about the file, and — for photos — what the camera left behind in EXIF: model, exposure date, GPS.</p>
+  </header>
+
+  <div class="viewfinder" id="dropzone" tabindex="0" role="button" aria-label="Upload a file to inspect">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div class="vf-badge" id="vfBadge">Focus Locked</div>
+    <div class="vf-center">
+      <div class="vf-icon"></div>
+      <div class="vf-label"><b>Click to load</b> or drag a file in</div>
+      <div class="vf-sub">JPEG · PNG · WEBP · GIF · PDF — read locally, nothing uploaded</div>
+    </div>
+    <div class="vf-preview" id="vfPreview"></div>
+    <input type="file" id="fileInput" accept="image/*,application/pdf">
+  </div>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <div class="sheet" id="sheet">
+    <div class="sheet-head">
+      <h2>Spec Sheet</h2>
+      <div class="filename" id="filenameLabel"></div>
+    </div>
+
+    <div class="grid">
+      <div class="panel" id="panelFile">
+        <div class="panel-title">01 — File</div>
+        <div id="fileRows"></div>
+      </div>
+      <div class="panel" id="panelDim">
+        <div class="panel-title">02 — Dimensions</div>
+        <div id="dimRows"></div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="panel" id="panelTime">
+        <div class="panel-title">03 — Timestamps</div>
+        <div id="timeRows"></div>
+      </div>
+      <div class="panel" id="panelCam">
+        <div class="panel-title warn">04 — Camera / EXIF</div>
+        <div id="camRows"></div>
+      </div>
+    </div>
+    <div class="grid" id="gpsGridWrap">
+      <div class="panel" id="panelGps" style="grid-column:1/-1;">
+        <div class="panel-title warn">05 — GPS</div>
+        <div id="gpsRows"></div>
+      </div>
+    </div>
+    <div class="note" id="noteBox"></div>
+  </div>
+
+  <footer>ALL PROCESSING HAPPENS IN YOUR BROWSER — FILES ARE NEVER TRANSMITTED</footer>
+</div>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const vfPreview = document.getElementById('vfPreview');
+const errorMsg = document.getElementById('errorMsg');
+const sheet = document.getElementById('sheet');
+
+const fileRows = document.getElementById('fileRows');
+const dimRows = document.getElementById('dimRows');
+const timeRows = document.getElementById('timeRows');
+const camRows = document.getElementById('camRows');
+const gpsRows = document.getElementById('gpsRows');
+const noteBox = document.getElementById('noteBox');
+const filenameLabel = document.getElementById('filenameLabel');
+const panelCam = document.getElementById('panelCam');
+const panelGps = document.getElementById('panelGps');
+const panelDim = document.getElementById('panelDim');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+
+['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.add('drag');
+}));
+['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+}));
+dropzone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) handleFile(f);
+});
+
+function fmtBytes(bytes){
+  if(bytes === 0) return '0 B';
+  const units = ['B','KB','MB','GB'];
+  const i = Math.floor(Math.log(bytes)/Math.log(1024));
+  return `${(bytes/Math.pow(1024,i)).toFixed(i===0?0:2)} ${units[i]}`;
+}
+
+function fmtDate(d){
+  if(!d || isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, {
+    year:'numeric', month:'short', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', second:'2-digit'
+  });
+}
+
+function row(container, key, value, opts={}){
+  const div = document.createElement('div');
+  div.className = 'row';
+  const cls = opts.na ? 'v na' : (opts.link ? 'v link' : 'v');
+  div.innerHTML = `<span class="k">${key}</span><span class="${cls}">${value}</span>`;
+  container.appendChild(div);
+}
+
+function clearAll(){
+  [fileRows, dimRows, timeRows, camRows, gpsRows].forEach(el => el.innerHTML = '');
+  noteBox.textContent = '';
+  errorMsg.style.display = 'none';
+}
+
+function convertDMSToDD(dms, ref){
+  if(!dms) return null;
+  const degrees = dms[0].numerator/dms[0].denominator;
+  const minutes = dms[1].numerator/dms[1].denominator;
+  const seconds = dms[2].numerator/dms[2].denominator;
+  let dd = degrees + minutes/60 + seconds/3600;
+  if(ref === 'S' || ref === 'W') dd *= -1;
+  return dd;
+}
+
+function exifDateToJs(str){
+  // EXIF dates look like "2023:08:14 10:22:31"
+  if(!str) return null;
+  const parts = str.split(' ');
+  if(parts.length < 2) return null;
+  const datePart = parts[0].replace(/:/g,'-');
+  return new Date(`${datePart}T${parts[1]}`);
+}
+
+function handleFile(file){
+  clearAll();
+  filenameLabel.textContent = file.name;
+  sheet.classList.add('show');
+  dropzone.classList.add('locked');
+
+  // --- FILE API: universal fields ---
+  row(fileRows, 'Name', file.name);
+  row(fileRows, 'Size', fmtBytes(file.size));
+  row(fileRows, 'MIME type', file.type || 'unknown', {na: !file.type});
+
+  const lastMod = new Date(file.lastModified);
+  row(timeRows, 'Last modified', fmtDate(lastMod) || '—', {na: !fmtDate(lastMod)});
+  row(timeRows, 'Created (OS-level)', 'Not exposed by browsers', {na:true});
+
+  const isImage = file.type.startsWith('image/');
+  const isPdf = file.type === 'application/pdf';
+
+  if(isImage){
+    renderImage(file);
+  } else if(isPdf){
+    renderPdf(file);
+  } else {
+    showError('This file type is not supported. Upload an image (JPEG, PNG, WEBP, GIF) or a PDF.');
+    return;
+  }
+}
+
+function showError(msg){
+  errorMsg.textContent = '⚠ ' + msg;
+  errorMsg.style.display = 'block';
+  sheet.classList.remove('show');
+  dropzone.classList.remove('locked');
+}
+
+function renderImage(file){
+  panelDim.classList.remove('empty');
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    row(dimRows, 'Width', `${img.naturalWidth} px`);
+    row(dimRows, 'Height', `${img.naturalHeight} px`);
+    const ratio = (img.naturalWidth / img.naturalHeight).toFixed(3);
+    row(dimRows, 'Aspect ratio', ratio);
+    row(dimRows, 'Megapixels', ((img.naturalWidth*img.naturalHeight)/1e6).toFixed(2) + ' MP');
+  };
+  img.onerror = () => {
+    row(dimRows, 'Width', 'Could not decode', {na:true});
+  };
+  img.src = url;
+
+  vfPreview.innerHTML = '';
+  const previewImg = document.createElement('img');
+  previewImg.src = url;
+  vfPreview.appendChild(previewImg);
+  vfPreview.style.display = 'flex';
+
+  // --- EXIF.js: camera metadata ---
+  if (typeof EXIF === 'undefined') {
+    row(camRows, 'EXIF library', 'Failed to load (offline or blocked)', {na:true});
+    row(gpsRows, 'GPS', 'Unavailable — EXIF library did not load', {na:true});
+    noteBox.textContent = 'The EXIF reader script could not be reached, so camera/GPS data isn\u2019t available this time. File size, type, dimensions, and dates above are unaffected.';
+    return;
+  }
+  EXIF.getData(file, function(){
+    const exif = this.exifdata || {};
+    const hasAny = Object.keys(exif).length > 0;
+
+    if(!hasAny){
+      camRows.innerHTML = '';
+      row(camRows, 'EXIF data', 'None found in this file', {na:true});
+      row(camRows, 'Likely reason', 'Stripped on export/screenshot, or format lacks EXIF', {na:true});
+      gpsRows.innerHTML = '';
+      row(gpsRows, 'GPS data', 'Not available', {na:true});
+      return;
+    }
+
+    const make = exif.Make;
+    const model = exif.Model;
+    const lens = exif.LensModel;
+    const fnum = exif.FNumber ? `f/${(exif.FNumber.numerator/exif.FNumber.denominator).toFixed(1)}` : null;
+    const exposure = exif.ExposureTime ? `1/${Math.round(exif.ExposureTime.denominator/exif.ExposureTime.numerator)}s` : null;
+    const iso = exif.ISOSpeedRatings;
+    const focal = exif.FocalLength ? `${(exif.FocalLength.numerator/exif.FocalLength.denominator).toFixed(0)}mm` : null;
+    const orient = exif.Orientation;
+
+    row(camRows, 'Make', make || '—', {na: !make});
+    row(camRows, 'Model', model || '—', {na: !model});
+    if(lens) row(camRows, 'Lens', lens);
+    row(camRows, 'Aperture', fnum || '—', {na: !fnum});
+    row(camRows, 'Shutter speed', exposure || '—', {na: !exposure});
+    row(camRows, 'ISO', iso ? String(iso) : '—', {na: !iso});
+    row(camRows, 'Focal length', focal || '—', {na: !focal});
+    if(orient) row(camRows, 'Orientation', String(orient));
+
+    const dtOriginal = exifDateToJs(exif.DateTimeOriginal || exif.DateTime);
+    if(dtOriginal && !isNaN(dtOriginal.getTime())){
+      row(timeRows, 'Date taken (EXIF)', fmtDate(dtOriginal));
+    } else {
+      row(camRows, 'Date taken', 'Not present in EXIF', {na:true});
+    }
+
+    // GPS
+    const lat = exif.GPSLatitude, lon = exif.GPSLongitude;
+    if(lat && lon){
+      const ddLat = convertDMSToDD(lat, exif.GPSLatitudeRef);
+      const ddLon = convertDMSToDD(lon, exif.GPSLongitudeRef);
+      row(gpsRows, 'Latitude', ddLat.toFixed(6) + '°');
+      row(gpsRows, 'Longitude', ddLon.toFixed(6) + '°');
+      if(exif.GPSAltitude){
+        const alt = exif.GPSAltitude.numerator/exif.GPSAltitude.denominator;
+        row(gpsRows, 'Altitude', alt.toFixed(1) + ' m');
+      }
+      const mapsUrl = `https://www.google.com/maps?q=${ddLat},${ddLon}`;
+      row(gpsRows, 'Map', `<a href="${mapsUrl}" target="_blank" rel="noopener">View on map ↗</a>`, {link:true});
+    } else {
+      row(gpsRows, 'GPS data', 'Not present — location was not tagged, or was stripped', {na:true});
+    }
+  });
+
+  noteBox.textContent = 'EXIF availability depends on the source: camera JPEGs usually carry it, while screenshots, WhatsApp/social re-exports, and most PNGs strip it entirely.';
+}
+
+function renderPdf(file){
+  panelDim.classList.add('empty');
+  dimRows.innerHTML = '';
+  row(dimRows, 'Page dimensions', 'Not exposed via Browser File API', {na:true});
+  row(dimRows, 'Note', 'Reading page geometry requires parsing the PDF itself', {na:true});
+
+  vfPreview.innerHTML = `<div class="file-glyph">
+      <svg width="40" height="52" viewBox="0 0 40 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 2H26L38 14V50H2V2Z" stroke="#E3A94C" stroke-width="2"/>
+        <path d="M26 2V14H38" stroke="#E3A94C" stroke-width="2"/>
+      </svg>
+      <span>PDF DOCUMENT</span>
+    </div>`;
+  vfPreview.style.display = 'flex';
+
+  camRows.innerHTML = '';
+  row(camRows, 'EXIF', 'Not applicable to PDF files', {na:true});
+  gpsRows.innerHTML = '';
+  row(gpsRows, 'GPS', 'Not applicable to PDF files', {na:true});
+
+  noteBox.textContent = 'PDFs don\u2019t expose page count, author, or producer through the Browser File API — that lives inside the file\u2019s internal structure, not its filesystem metadata. Size, type, and modified date are read the same way as any file.';
+}
+</script>
+</body>
+</html>
